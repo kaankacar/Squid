@@ -1,0 +1,90 @@
+# Stellar Squid Skill Configuration
+name: stellar-squid
+version: 1.0.0
+description: Autonomous survival agent for the Stellar Squid on-chain game
+
+# Command handlers
+commands:
+  install:
+    description: Generate keypair, wait for funding, deploy agent contract
+    handler: agent.install
+  
+  status:
+    description: Check agent status (deadline, balance, score)
+    handler: agent.checkStatus
+  
+  pulse:
+    description: Manually trigger pulse
+    handler: agent.pulse
+  
+  scan:
+    description: Scan for dead/dying agents via GameRegistry
+    handler: agent.scan
+  
+  liquidate:
+    description: Liquidate a dead agent and claim their balance
+    handler: agent.liquidate
+    args:
+      - name: target_id
+        type: string
+        required: true
+        description: Target agent contract ID to liquidate
+  
+  withdraw:
+    description: Exit game with 80% refund
+    handler: agent.withdraw
+  
+  stop:
+    description: Stop autonomous survival loop
+    handler: agent.stopLoop
+  
+  start:
+    description: Restart autonomous survival loop
+    handler: agent.startLoop
+  
+  debug:
+    description: Show full agent state
+    handler: agent.debug
+
+# Default configuration
+config:
+  # Network: 'testnet' or 'public'
+  network: testnet
+  
+  # Contract addresses (testnet defaults)
+  gameRegistry: null  # Set after deployment
+  wasmHash: null      # Set after WASM upload
+  
+  # Relayer service URL
+  relayerUrl: null
+  
+  # Timing (in seconds)
+  pulseInterval: 60       # Check deadline every 60 seconds
+  scanInterval: 300       # Scan for targets every 5 minutes
+  safetyMarginPercent: 10 # Pulse when within 10% of deadline
+  
+  # Game constants
+  entryBond: 50           # XLM required to enter
+  minBalanceBuffer: 1.5   # Withdraw if balance < 1.5x next round cost
+  
+  # Round costs (XLM per pulse)
+  roundCosts:
+    1: 0.5
+    2: 1.0
+    3: 2.0
+    4: 3.0
+    5: 5.0
+  
+  # Round durations (ledgers, approx 5s per ledger)
+  roundDurations:
+    1: 4320   # ~6 hours
+    2: 2160   # ~3 hours
+    3: 720    # ~1 hour
+    4: 360    # ~30 minutes
+    5: 180    # ~15 minutes
+
+# State file location
+statePath: .stellar-squid/state.json
+
+# Log level
+logLevel: info
