@@ -21,6 +21,7 @@
   "author": "Stellar Squid Team",
   "license": "MIT",
   "dependencies": {
+    "@openzeppelin/defender-sdk": "^2.7.1",
     "@stellar/stellar-sdk": "^14.5.0",
     "@types/dotenv": "^6.1.1",
     "@types/helmet": "^0.0.48",

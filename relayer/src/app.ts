@@ -1,25 +1,26 @@
 /**
  * Stellar Squid Relayer Service
  * Main Application Entry Point
+ * Uses OpenZeppelin Defender Relayer for secure transaction submission
  */
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
-import { StellarService } from './services/stellar';
+import { DefenderService } from './services/defender';
 import { RelayerService } from './services/relayer';
 import { createRoutes } from './routes';
 import RateLimiter from './middleware/rateLimit';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import logger from './utils/logger';
-import { RelayerConfig } from './types';
+import { DefenderRelayerConfig } from './types';
 
 // Load environment variables
 dotenv.config();
 
 // Validate required environment variables
-function validateConfig(): RelayerConfig {
-  const required = ['RELAYER_SECRET_KEY'];
+function validateConfig(): DefenderRelayerConfig {
+  const required = ['DEFENDER_API_KEY', 'DEFENDER_API_SECRET', 'DEFENDER_RELAYER_ID'];
   const missing = required.filter((key) => !process.env[key]);
 
   if (missing.length > 0) {
@@ -32,8 +33,9 @@ function validateConfig(): RelayerConfig {
     port: parseInt(process.env.PORT || '3000', 10),
     network,
     horizonUrl: process.env.STELLAR_HORIZON_URL || getDefaultHorizonUrl(network),
-    rpcUrl: process.env.STELLAR_RPC_URL || getDefaultRpcUrl(network),
-    relayerSecretKey: process.env.RELAYER_SECRET_KEY!,
+    defenderApiKey: process.env.DEFENDER_API_KEY!,
+    defenderApiSecret: process.env.DEFENDER_API_SECRET!,
+    defenderRelayerId: process.env.DEFENDER_RELAYER_ID!,
     protocolFeeAddress: process.env.PROTOCOL_FEE_ADDRESS || '',
     maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10),
     retryDelayMs: parseInt(process.env.RETRY_DELAY_MS || '1000', 10),
@@ -57,39 +59,32 @@ function getDefaultHorizonUrl(network: string): string {
   }
 }
 
-function getDefaultRpcUrl(network: string): string {
-  switch (network) {
-    case 'public':
-      return 'https://soroban-rpc.stellar.org';
-    case 'testnet':
-      return 'https://soroban-testnet.stellar.org';
-    case 'futurenet':
-      return 'https://soroban-futurenet.stellar.org';
-    default:
-      return 'https://soroban-testnet.stellar.org';
-  }
-}
-
 async function startServer() {
   try {
     // Load and validate configuration
     const config = validateConfig();
 
-    logger.info('Starting Stellar Squid Relayer', {
+    logger.info('Starting Stellar Squid Relayer with OpenZeppelin Defender', {
       network: config.network,
       port: config.port,
       horizon: config.horizonUrl,
+      relayerId: config.defenderRelayerId,
     });
 
-    // Initialize services
-    const stellarService = new StellarService({
-      horizonUrl: config.horizonUrl,
-      rpcUrl: config.rpcUrl,
-      relayerSecretKey: config.relayerSecretKey,
+    // Initialize Defender service
+    const defenderService = new DefenderService({
+      apiKey: config.defenderApiKey,
+      apiSecret: config.defenderApiSecret,
+      relayerId: config.defenderRelayerId,
       network: config.network,
+      horizonUrl: config.horizonUrl,
     });
 
-    const relayerService = new RelayerService(stellarService, config);
+    // Initialize Defender connection
+    await defenderService.initialize();
+
+    // Initialize relayer service
+    const relayerService = new RelayerService(defenderService, config as any);
 
     // Create Express app
     const app = express();
@@ -114,6 +109,7 @@ async function startServer() {
       const health = await relayerService.getHealth();
       res.json({
         service: 'Stellar Squid Relayer',
+        provider: 'OpenZeppelin Defender',
         version: process.env.npm_package_version || '1.0.0',
         status: health.status,
         network: config.network,
@@ -130,6 +126,7 @@ async function startServer() {
       logger.info(`Relayer server listening on port ${config.port}`, {
         relayerAddress: relayerService.getRelayerAddress(),
         network: config.network,
+        provider: 'OpenZeppelin Defender',
       });
     });
 

@@ -1,8 +1,9 @@
 /**
  * Relayer Service - Main Business Logic
  * Handles transaction queuing, monitoring, and relayer wallet management
+ * Uses OpenZeppelin Defender Relayer for blockchain interactions
  */
-import { StellarService } from './stellar';
+import { DefenderService } from './defender';
 import logger from '../utils/logger';
 import {
   RelayRequest,
@@ -18,27 +19,37 @@ import {
 import cron from 'node-cron';
 
 export class RelayerService {
-  private stellar: StellarService;
+  private defender: DefenderService;
   private config: RelayerConfig;
   private startTime: number = Date.now();
   private submissionQueue: QueuedTransaction[] = [];
   private processedTxs: Map<string, { status: TransactionStatus; timestamp: Date }> = new Map();
 
-  constructor(stellarService: StellarService, config: RelayerConfig) {
-    this.stellar = stellarService;
+  constructor(defenderService: DefenderService, config: RelayerConfig) {
+    this.defender = defenderService;
     this.config = config;
 
     // Start monitoring cron job
     this.startMonitoring();
 
-    logger.info('RelayerService initialized', {
-      relayerAddress: this.stellar.getRelayerPublicKey(),
+    logger.info('RelayerService initialized with Defender', {
+      relayerAddress: this.defender.getRelayerPublicKey(),
       network: config.network,
     });
   }
 
   /**
-   * Submit a signed transaction to the network
+   * Initialize the service and Defender connection
+   */
+  async initialize(): Promise<void> {
+    await this.defender.initialize();
+    logger.info('RelayerService fully initialized', {
+      relayerAddress: this.defender.getRelayerPublicKey(),
+    });
+  }
+
+  /**
+   * Submit a signed transaction to the network via Defender
    */
   async relay(request: RelayRequest): Promise<RelayResponse> {
     logger.info('Relay request received', {
@@ -63,8 +74,8 @@ export class RelayerService {
       };
     }
 
-    // Submit via Stellar service
-    const result = await this.stellar.submitTransaction(
+    // Submit via Defender service
+    const result = await this.defender.submitTransaction(
       request,
       this.config.maxRetries
     );
@@ -101,29 +112,29 @@ export class RelayerService {
     }
 
     // Query from network
-    return this.stellar.getTransactionStatus(txHash);
+    return this.defender.getTransactionStatus(txHash);
   }
 
   /**
    * Estimate fees for a transaction
    */
   async estimateFees(request: FeeEstimateRequest): Promise<FeeEstimateResponse> {
-    return this.stellar.estimateFees(request);
+    return this.defender.estimateFees(request);
   }
 
   /**
    * Get health status
    */
   async getHealth(): Promise<HealthResponse> {
-    const [horizonConnected, rpcConnected, balance] = await Promise.all([
-      this.stellar.isHorizonConnected(),
-      this.stellar.isRpcConnected(),
-      this.stellar.getRelayerBalance(),
+    const [horizonConnected, defenderConnected, balance] = await Promise.all([
+      this.defender.isHorizonConnected(),
+      this.defender.isDefenderConnected(),
+      this.defender.getRelayerBalance(),
     ]);
 
     // Determine overall status
     let status: 'healthy' | 'degraded' | 'unhealthy' = 'healthy';
-    if (!horizonConnected || !rpcConnected) {
+    if (!horizonConnected || !defenderConnected) {
       status = 'unhealthy';
     } else if (parseFloat(balance) < 10) {
       status = 'degraded'; // Low balance warning
@@ -141,11 +152,11 @@ export class RelayerService {
       status,
       version: process.env.npm_package_version || '1.0.0',
       timestamp: new Date().toISOString(),
-      network: this.stellar.getNetwork(),
+      network: this.defender.getNetwork(),
       horizonConnected,
-      rpcConnected,
+      rpcConnected: defenderConnected, // Defender acts as RPC
       relayerBalance: balance,
-      queuedTransactions: this.stellar.getPendingCount(),
+      queuedTransactions: this.defender.getPendingCount(),
       system: {
         uptime: Math.floor((Date.now() - this.startTime) / 1000),
         memory: memStats,
@@ -175,18 +186,18 @@ export class RelayerService {
         }
 
         // Check relayer balance and alert if low
-        const balance = await this.stellar.getRelayerBalance();
+        const balance = await this.defender.getRelayerBalance();
         const balanceXlm = parseFloat(balance);
 
         if (balanceXlm < 5) {
           logger.error('CRITICAL: Relayer balance is critically low', {
             balance: balanceXlm,
-            address: this.stellar.getRelayerPublicKey(),
+            address: this.defender.getRelayerPublicKey(),
           });
         } else if (balanceXlm < 20) {
           logger.warn('Relayer balance is low', {
             balance: balanceXlm,
-            address: this.stellar.getRelayerPublicKey(),
+            address: this.defender.getRelayerPublicKey(),
           });
         }
 
@@ -208,7 +219,7 @@ export class RelayerService {
    * Get relayer wallet address
    */
   getRelayerAddress(): string {
-    return this.stellar.getRelayerPublicKey();
+    return this.defender.getRelayerPublicKey();
   }
 
   /**

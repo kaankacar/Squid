@@ -110,12 +110,35 @@ export interface QueuedTransaction {
   metadata?: TransactionMetadata;
 }
 
+/**
+ * Legacy Relayer Configuration (for direct Stellar integration)
+ * @deprecated Use DefenderRelayerConfig instead
+ */
 export interface RelayerConfig {
   port: number;
   network: 'testnet' | 'public' | 'futurenet';
   horizonUrl: string;
   rpcUrl: string;
   relayerSecretKey: string;
+  protocolFeeAddress: string;
+  maxRetries: number;
+  retryDelayMs: number;
+  txTimeoutSeconds: number;
+  rateLimitWindowMs: number;
+  rateLimitMaxRequests: number;
+  logLevel: string;
+}
+
+/**
+ * OpenZeppelin Defender Relayer Configuration
+ */
+export interface DefenderRelayerConfig {
+  port: number;
+  network: 'testnet' | 'public' | 'futurenet';
+  horizonUrl: string;
+  defenderApiKey: string;
+  defenderApiSecret: string;
+  defenderRelayerId: string;
   protocolFeeAddress: string;
   maxRetries: number;
   retryDelayMs: number;

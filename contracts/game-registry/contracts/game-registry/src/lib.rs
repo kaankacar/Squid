@@ -144,6 +144,10 @@ pub enum Error {
     RoundNotComplete = 12,
     AgentDead = 13,
     AgentWithdrawn = 14,
+    Overflow = 15,
+    InvalidAddress = 16,
+    LiquidationInProgress = 17,
+    DivisionByZero = 18,
 }
 
 // =============================================================================
@@ -209,6 +213,10 @@ impl GameRegistry {
     /// Initialize the contract with the protocol fee address
     /// This should be called once during deployment
     pub fn init(env: Env, protocol_fee_address: Address) {
+        // Validate the address by attempting to require auth
+        // This will fail if the address is invalid
+        protocol_fee_address.require_auth();
+
         // Set protocol fee address
         env.storage()
             .instance()
@@ -414,13 +422,24 @@ impl GameRegistry {
     }
 
     /// Update agent status from AgentContract - called during pulse
-    /// Collects pulse tax to prize pool
+    /// Collects pulse tax to prize pool with overflow protection
     pub fn update_agent_pulse(
         env: Env,
         agent_id: BytesN<32>,
         pulse_amount: i128,
         is_late: bool,
     ) -> Result<(), Error> {
+        // Require authorization from the agent contract
+        // This prevents unauthorized pulse calls
+        let agent_addr: Address = env
+            .storage()
+            .persistent()
+            .get(&AGENTS_KEY)
+            .and_then(|agents: Map<BytesN<32>, AgentRecord>| agents.get(agent_id.clone()))
+            .map(|agent: AgentRecord| agent.contract_address)
+            .ok_or(Error::AgentNotFound)?;
+        agent_addr.require_auth();
+
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
             .persistent()
@@ -436,24 +455,43 @@ impl GameRegistry {
             _ => {}
         }
 
-        // Calculate pulse split
-        let protocol_fee = pulse_amount * PROTOCOL_FEE_BPS as i128 / 10000;
-        let prize_pool_contribution = pulse_amount * PRIZE_POOL_BPS as i128 / 10000;
-        let total_deducted = protocol_fee + prize_pool_contribution;
+        // Calculate pulse split with overflow protection
+        let protocol_fee = pulse_amount
+            .checked_mul(PROTOCOL_FEE_BPS as i128)
+            .ok_or(Error::Overflow)?
+            .checked_div(10000)
+            .ok_or(Error::DivisionByZero)?;
+        let prize_pool_contribution = pulse_amount
+            .checked_mul(PRIZE_POOL_BPS as i128)
+            .ok_or(Error::Overflow)?
+            .checked_div(10000)
+            .ok_or(Error::DivisionByZero)?;
+        let total_deducted = protocol_fee
+            .checked_add(prize_pool_contribution)
+            .ok_or(Error::Overflow)?;
 
-        // Update prize pool
+        // Update prize pool with overflow protection
         let current_prize_pool: i128 = env
             .storage()
             .instance()
             .get(&PRIZE_POOL_KEY)
             .unwrap_or(0);
+        let new_prize_pool = current_prize_pool
+            .checked_add(prize_pool_contribution)
+            .ok_or(Error::Overflow)?;
         env.storage()
             .instance()
-            .set(&PRIZE_POOL_KEY, &(current_prize_pool + prize_pool_contribution));
+            .set(&PRIZE_POOL_KEY, &new_prize_pool);
 
-        // Update agent stats
-        agent.total_spent += pulse_amount;
-        agent.heart_balance -= total_deducted;
+        // Update agent stats with overflow protection
+        agent.total_spent = agent
+            .total_spent
+            .checked_add(pulse_amount)
+            .ok_or(Error::Overflow)?;
+        agent.heart_balance = agent
+            .heart_balance
+            .checked_sub(total_deducted)
+            .ok_or(Error::Overflow)?;
 
         let current_ledger = env.ledger().sequence();
         let season_data: (u32, u32, bool) = env
@@ -464,25 +502,39 @@ impl GameRegistry {
         let config = get_round_config(&env, season_data.0);
 
         agent.last_pulse_ledger = current_ledger;
-        agent.deadline_ledger = current_ledger + config.pulse_period;
-        agent.grace_deadline = agent.deadline_ledger + config.grace_period;
+        agent.deadline_ledger = current_ledger
+            .checked_add(config.pulse_period)
+            .ok_or(Error::Overflow)?;
+        agent.grace_deadline = agent
+            .deadline_ledger
+            .checked_add(config.grace_period)
+            .ok_or(Error::Overflow)?;
 
         if is_late {
             agent.status = AgentStatus::Wounded;
-            agent.wound_count += 1;
+            agent.wound_count = agent
+                .wound_count
+                .checked_add(1)
+                .ok_or(Error::Overflow)?;
             agent.streak_count = 0;
         } else {
-            agent.streak_count += 1;
+            agent.streak_count = agent
+                .streak_count
+                .checked_add(1)
+                .ok_or(Error::Overflow)?;
             // Activity score with streak bonus
             let streak_bonus = match agent.streak_count {
-                0..=9 => 10,
-                10..=24 => 11,
-                25..=49 => 12,
-                50..=99 => 15,
-                _ => 20,
+                0..=9 => 10u64,
+                10..=24 => 11u64,
+                25..=49 => 12u64,
+                50..=99 => 15u64,
+                _ => 20u64,
             };
-            agent.activity_score += streak_bonus as u64;
-            
+            agent.activity_score = agent
+                .activity_score
+                .checked_add(streak_bonus)
+                .ok_or(Error::Overflow)?;
+
             // Clear wounded status after 2 on-time pulses
             if agent.status == AgentStatus::Wounded {
                 agent.status = AgentStatus::Alive;
@@ -513,50 +565,94 @@ impl GameRegistry {
     }
 
     /// Transfer kill reward from dead agent to killer
+    /// Uses checks-effects-interactions pattern with overflow protection
     pub fn transfer_kill_reward(
         env: Env,
         dead_agent_id: BytesN<32>,
         killer_agent_id: BytesN<32>,
     ) -> Result<i128, Error> {
+        // Prevent self-liquidation
+        if dead_agent_id == killer_agent_id {
+            return Err(Error::InvalidAgentContract);
+        }
+
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
             .persistent()
             .get(&AGENTS_KEY)
             .ok_or(Error::AgentNotFound)?;
 
+        // Step 1: CHECKS - Validate all preconditions first
         let dead_agent = agents
             .get(dead_agent_id.clone())
             .ok_or(Error::AgentNotFound)?;
 
-        // Verify agent is dead
+        // Verify agent is dead and has not already been liquidated
         if dead_agent.status != AgentStatus::Dead {
             return Err(Error::AgentNotFound);
         }
 
-        let reward = dead_agent.heart_balance;
+        // Verify dead agent has balance to claim (prevents re-liquidation)
+        if dead_agent.heart_balance == 0 {
+            return Err(Error::NoPrizeToClaim);
+        }
 
-        // Update killer
-        let mut killer = agents
+        // Validate killer exists and is alive
+        let killer = agents
             .get(killer_agent_id.clone())
             .ok_or(Error::AgentNotFound)?;
-        killer.heart_balance += reward;
-        killer.total_earned += reward;
-        killer.kill_count += 1;
 
-        agents.set(killer_agent_id, killer);
+        match killer.status {
+            AgentStatus::Alive | AgentStatus::Wounded => {}
+            _ => return Err(Error::AgentDead),
+        }
 
-        // Update dead agent (balance goes to 0)
-        let mut dead = agents.get(dead_agent_id).unwrap();
-        dead.heart_balance = 0;
-        agents.set(dead.agent_id.clone(), dead);
+        // Step 2: EFFECTS - Calculate reward and update all state before any external interactions
+        let reward = dead_agent.heart_balance;
 
+        // Update killer with overflow protection
+        let new_killer_balance = killer
+            .heart_balance
+            .checked_add(reward)
+            .ok_or(Error::Overflow)?;
+        let new_total_earned = killer
+            .total_earned
+            .checked_add(reward)
+            .ok_or(Error::Overflow)?;
+        let new_kill_count = killer
+            .kill_count
+            .checked_add(1)
+            .ok_or(Error::Overflow)?;
+
+        let mut killer_mut = killer.clone();
+        killer_mut.heart_balance = new_killer_balance;
+        killer_mut.total_earned = new_total_earned;
+        killer_mut.kill_count = new_kill_count;
+
+        // Zero out dead agent balance BEFORE writing killer state
+        let mut dead_mut = dead_agent.clone();
+        dead_mut.heart_balance = 0;
+
+        // Step 3: Write all state atomically
+        agents.set(killer_agent_id, killer_mut);
+        agents.set(dead_agent_id.clone(), dead_mut);
         env.storage().persistent().set(&AGENTS_KEY, &agents);
 
         Ok(reward)
     }
 
-    /// Process withdrawal - 20% goes to prize pool
+    /// Process withdrawal - 20% goes to prize pool with overflow protection
     pub fn process_withdrawal(env: Env, agent_id: BytesN<32>) -> Result<i128, Error> {
+        // Require authorization from the agent owner
+        let agent_addr: Address = env
+            .storage()
+            .persistent()
+            .get(&AGENTS_KEY)
+            .and_then(|agents: Map<BytesN<32>, AgentRecord>| agents.get(agent_id.clone()))
+            .map(|agent: AgentRecord| agent.owner)
+            .ok_or(Error::AgentNotFound)?;
+        agent_addr.require_auth();
+
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
             .persistent()
@@ -565,20 +661,42 @@ impl GameRegistry {
 
         let mut agent = agents.get(agent_id.clone()).ok_or(Error::AgentNotFound)?;
 
+        // Verify agent is not already dead or withdrawn
+        match agent.status {
+            AgentStatus::Dead => return Err(Error::AgentDead),
+            AgentStatus::Withdrawn => return Err(Error::AgentWithdrawn),
+            _ => {}
+        }
+
         // Calculate withdrawal amounts (80% to agent, 20% to prize pool)
         let balance = agent.heart_balance;
-        let agent_refund = balance * 80 / 100;
-        let prize_contribution = balance * 20 / 100;
+        if balance == 0 {
+            return Err(Error::NoPrizeToClaim);
+        }
 
-        // Update prize pool
+        let agent_refund = balance
+            .checked_mul(80)
+            .ok_or(Error::Overflow)?
+            .checked_div(100)
+            .ok_or(Error::DivisionByZero)?;
+        let prize_contribution = balance
+            .checked_mul(20)
+            .ok_or(Error::Overflow)?
+            .checked_div(100)
+            .ok_or(Error::DivisionByZero)?;
+
+        // Update prize pool with overflow protection
         let current_prize_pool: i128 = env
             .storage()
             .instance()
             .get(&PRIZE_POOL_KEY)
             .unwrap_or(0);
+        let new_prize_pool = current_prize_pool
+            .checked_add(prize_contribution)
+            .ok_or(Error::Overflow)?;
         env.storage()
             .instance()
-            .set(&PRIZE_POOL_KEY, &(current_prize_pool + prize_contribution));
+            .set(&PRIZE_POOL_KEY, &new_prize_pool);
 
         // Mark agent as withdrawn
         agent.status = AgentStatus::Withdrawn;
