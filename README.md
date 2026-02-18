@@ -55,10 +55,16 @@ stellar-squid/
 
 ## Status
 
-| Phase | Status |
-|-------|--------|
-| 1 - Setup | In Progress |
-| 2 - Core Contracts | Pending |
-| 3 - Relayer | Pending |
-| 4 - Skill | Pending |
-| 5 - Integration | Pending |
+| Phase | Status | Assignee |
+|-------|--------|----------|
+| 1 - Setup | ✅ Complete | Orchestrator |
+| 2 - Core Contracts | 🔄 In Progress | Subagents |
+| 3 - Relayer | 🔄 In Progress | Subagent |
+| 4 - Skill | 🔄 In Progress | Subagent |
+| 5 - Integration | ⏳ Pending | TBD |
+
+### Active Subagents
+- `squid-game-registry` — Building GameRegistry contract
+- `squid-agent-contract` — Building AgentContract
+- `squid-relayer` — Building OpenZeppelin relayer service
+- `squid-skill` — Building OpenClaw skill package
