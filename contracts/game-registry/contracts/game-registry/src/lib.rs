@@ -1,6 +1,6 @@
 #![no_std]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, BytesN,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, vec, Address, BytesN,
     Env, Map, Symbol, Vec,
 };
 
@@ -48,6 +48,9 @@ pub const AGENTS_KEY: Symbol = symbol_short!("AGENTS");
 pub const AGENT_COUNT_KEY: Symbol = symbol_short!("AGENTCNT");
 pub const SEASON_DATA_KEY: Symbol = symbol_short!("SEASDATA");
 
+// Maximum number of agents allowed per season
+pub const MAX_AGENTS: u32 = 10000;
+
 // =============================================================================
 // DATA STRUCTURES
 // =============================================================================
@@ -93,6 +96,7 @@ pub struct AgentRecord {
     pub total_spent: i128,
     pub kill_count: u32,
     pub round_joined: u32,
+    pub prize_claimed: bool, // NEW: Prevent double-claiming prizes
 }
 
 #[contracttype]
@@ -123,6 +127,107 @@ pub struct RoundConfig {
 }
 
 // =============================================================================
+// EVENTS
+// =============================================================================
+
+/// Event emitted when a new agent is registered
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentRegistered {
+    pub agent_id: BytesN<32>,
+    pub contract_address: Address,
+    pub season_id: u32,
+    pub round_joined: u32,
+}
+
+/// Event emitted when an agent's pulse is processed
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PulseProcessed {
+    pub agent_id: BytesN<32>,
+    pub amount: i128,
+    pub is_late: bool,
+    pub new_deadline: u32,
+}
+
+/// Event emitted when a round is advanced
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoundAdvanced {
+    pub season_id: u32,
+    pub new_round: u32,
+    pub round_name: Symbol,
+}
+
+/// Event emitted when a prize is claimed
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PrizeClaimed {
+    pub agent_id: BytesN<32>,
+    pub amount: i128,
+}
+
+/// Legacy event structs for backward compatibility
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PulseEvent {
+    pub agent_id: BytesN<32>,
+    pub ledger: u32,
+    pub cost: i128,
+    pub is_late: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AgentRegisteredEvent {
+    pub agent_id: BytesN<32>,
+    pub owner: Address,
+    pub season_id: u32,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AgentLiquidatedEvent {
+    pub dead_agent_id: BytesN<32>,
+    pub killer_agent_id: BytesN<32>,
+    pub reward: i128,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct AgentWithdrawnEvent {
+    pub agent_id: BytesN<32>,
+    pub refund: i128,
+    pub prize_contribution: i128,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct PrizeClaimedEvent {
+    pub agent_id: BytesN<32>,
+    pub prize_amount: i128,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct SeasonStartedEvent {
+    pub season_id: u32,
+    pub ledger: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RoundAdvancedEvent {
+    pub season_id: u32,
+    pub new_round: u32,
+    pub ledger: u32,
+}
+
+// =============================================================================
 // ERRORS
 // =============================================================================
 
@@ -148,6 +253,9 @@ pub enum Error {
     InvalidAddress = 16,
     LiquidationInProgress = 17,
     DivisionByZero = 18,
+    UnauthorizedCaller = 19,    // NEW: Caller is not authorized
+    MaxAgentsReached = 20,      // NEW: Maximum agent limit reached
+    PrizeAlreadyClaimed = 21,   // NEW: Prize already claimed by agent
 }
 
 // =============================================================================
@@ -210,8 +318,9 @@ impl GameRegistry {
     // INITIALIZATION
     // =========================================================================
 
-    /// Initialize the contract with the protocol fee address
-    /// This should be called once during deployment
+    /// @notice Initialize the GameRegistry contract
+    /// @dev Should be called once during deployment. Sets the protocol fee address.
+    /// @param protocol_fee_address The address that receives 5% of pulse fees
     pub fn init(env: Env, protocol_fee_address: Address) {
         // Validate the address by attempting to require auth
         // This will fail if the address is invalid
@@ -236,8 +345,9 @@ impl GameRegistry {
     // PERMISSIONLESS FUNCTIONS
     // =========================================================================
 
-    /// Initialize a new season - permissionless
-    /// Anyone can call this when there's no active season
+    /// @notice Initialize a new game season - permissionless
+    /// @dev Anyone can call this when there's no active season or previous season ended
+    /// @return season_id The ID of the newly created season
     pub fn init_season(env: Env) -> Result<u32, Error> {
         let current_season: u32 = env
             .storage()
@@ -285,11 +395,22 @@ impl GameRegistry {
             .instance()
             .set(&SEASON_DATA_KEY, &season_data);
 
+        // Emit season started event
+        env.events().publish(
+            (symbol_short!("SEASON"), new_season),
+            SeasonStartedEvent {
+                season_id: new_season,
+                ledger: current_ledger,
+            },
+        );
+
         Ok(new_season)
     }
 
-    /// Register a new agent - permissionless
-    /// Agent must have deployed their contract and hold the entry bond
+    /// @notice Register a new agent - permissionless
+    /// @dev Agent must have deployed their contract and hold the entry bond
+    /// @param agent_contract The address of the agent's contract
+    /// @param agent_id Unique 32-byte identifier for the agent
     pub fn register(
         env: Env,
         agent_contract: Address,
@@ -315,6 +436,16 @@ impl GameRegistry {
             return Err(Error::SeasonAlreadyEnded);
         }
 
+        // Check max agents limit
+        let current_count: u32 = env
+            .storage()
+            .instance()
+            .get(&AGENT_COUNT_KEY)
+            .unwrap_or(0);
+        if current_count >= MAX_AGENTS {
+            return Err(Error::MaxAgentsReached);
+        }
+
         // Check if agent already registered
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -334,7 +465,7 @@ impl GameRegistry {
         let agent_record = AgentRecord {
             agent_id: agent_id.clone(),
             owner: agent_contract.clone(),
-            contract_address: agent_contract,
+            contract_address: agent_contract.clone(),
             season_id,
             status: AgentStatus::Alive,
             deadline_ledger: current_ledger + config.pulse_period,
@@ -348,6 +479,7 @@ impl GameRegistry {
             total_spent: 0,
             kill_count: 0,
             round_joined: season_data.0,
+            prize_claimed: false, // Initialize prize_claimed to false
         };
 
         // Store agent
@@ -364,11 +496,23 @@ impl GameRegistry {
             .instance()
             .set(&AGENT_COUNT_KEY, &(count + 1));
 
+        // Emit registration event
+        env.events().publish(
+            (symbol_short!("REGISTER"), agent_id.clone()),
+            AgentRegisteredEvent {
+                agent_id,
+                owner: agent_contract,
+                season_id,
+                ledger: current_ledger,
+            },
+        );
+
         Ok(())
     }
 
-    /// Advance to next round - permissionless
-    /// Anyone can call this when the current round deadline has passed
+    /// @notice Advance to next round - permissionless
+    /// @dev Anyone can call this when the current round deadline has passed
+    /// @return round The new round number
     pub fn advance_round(env: Env) -> Result<u32, Error> {
         // Check if season is active
         let season_id: u32 = env
@@ -418,28 +562,31 @@ impl GameRegistry {
             .instance()
             .set(&SEASON_DATA_KEY, &new_season_data);
 
+        // Emit round advanced event
+        env.events().publish(
+            (symbol_short!("ROUND"), next_round),
+            RoundAdvancedEvent {
+                season_id,
+                new_round: next_round,
+                ledger: current_ledger,
+            },
+        );
+
         Ok(next_round)
     }
 
-    /// Update agent status from AgentContract - called during pulse
-    /// Collects pulse tax to prize pool with overflow protection
+    /// @notice Update agent status from AgentContract - called during pulse
+    /// @dev Collects pulse tax to prize pool with overflow protection
+    /// @param agent_id The unique identifier of the agent pulsing
+    /// @param pulse_amount The amount paid for the pulse (distributed 5%/5%/90%)
+    /// @param is_late Whether the pulse was made during the grace period
     pub fn update_agent_pulse(
         env: Env,
         agent_id: BytesN<32>,
         pulse_amount: i128,
         is_late: bool,
     ) -> Result<(), Error> {
-        // Require authorization from the agent contract
-        // This prevents unauthorized pulse calls
-        let agent_addr: Address = env
-            .storage()
-            .persistent()
-            .get(&AGENTS_KEY)
-            .and_then(|agents: Map<BytesN<32>, AgentRecord>| agents.get(agent_id.clone()))
-            .map(|agent: AgentRecord| agent.contract_address)
-            .ok_or(Error::AgentNotFound)?;
-        agent_addr.require_auth();
-
+        // Get agent record first
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
             .persistent()
@@ -447,6 +594,11 @@ impl GameRegistry {
             .ok_or(Error::AgentNotFound)?;
 
         let mut agent = agents.get(agent_id.clone()).ok_or(Error::AgentNotFound)?;
+
+        // CRITICAL: Verify caller is the agent's registered contract address
+        // This prevents unauthorized contracts from calling update_agent_pulse
+        // The agent contract must authorize this call
+        agent.contract_address.require_auth();
 
         // Check agent status
         match agent.status {
@@ -541,13 +693,28 @@ impl GameRegistry {
             }
         }
 
-        agents.set(agent_id, agent);
+        let new_deadline = agent.deadline_ledger;
+
+        agents.set(agent_id.clone(), agent);
         env.storage().persistent().set(&AGENTS_KEY, &agents);
+
+        // Emit pulse event
+        env.events().publish(
+            (symbol_short!("PULSE"), agent_id.clone()),
+            PulseEvent {
+                agent_id,
+                ledger: current_ledger,
+                cost: pulse_amount,
+                is_late,
+            },
+        );
 
         Ok(())
     }
 
-    /// Mark agent as dead (called during liquidation)
+    /// @notice Mark agent as dead (called during liquidation)
+    /// @dev Only callable by the GameRegistry itself
+    /// @param agent_id The unique identifier of the agent to mark as dead
     pub fn mark_agent_dead(env: Env, agent_id: BytesN<32>) -> Result<(), Error> {
         let mut agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -564,8 +731,11 @@ impl GameRegistry {
         Ok(())
     }
 
-    /// Transfer kill reward from dead agent to killer
-    /// Uses checks-effects-interactions pattern with overflow protection
+    /// @notice Transfer kill reward from dead agent to killer
+    /// @dev Uses checks-effects-interactions pattern with overflow protection
+    /// @param dead_agent_id The ID of the agent being liquidated
+    /// @param killer_agent_id The ID of the agent performing the liquidation
+    /// @return reward The amount of XLM transferred as reward (100% of victim's balance)
     pub fn transfer_kill_reward(
         env: Env,
         dead_agent_id: BytesN<32>,
@@ -634,14 +804,29 @@ impl GameRegistry {
         dead_mut.heart_balance = 0;
 
         // Step 3: Write all state atomically
-        agents.set(killer_agent_id, killer_mut);
+        agents.set(killer_agent_id.clone(), killer_mut);
         agents.set(dead_agent_id.clone(), dead_mut);
         env.storage().persistent().set(&AGENTS_KEY, &agents);
+
+        // Emit liquidation event
+        let current_ledger = env.ledger().sequence();
+        env.events().publish(
+            (symbol_short!("LIQUIDATE"), dead_agent_id.clone()),
+            AgentLiquidatedEvent {
+                dead_agent_id,
+                killer_agent_id,
+                reward,
+                ledger: current_ledger,
+            },
+        );
 
         Ok(reward)
     }
 
-    /// Process withdrawal - 20% goes to prize pool with overflow protection
+    /// @notice Process withdrawal - 20% goes to prize pool with overflow protection
+    /// @dev Requires authorization from the agent owner
+    /// @param agent_id The unique identifier of the agent withdrawing
+    /// @return refund The amount refunded to the agent (80% of balance)
     pub fn process_withdrawal(env: Env, agent_id: BytesN<32>) -> Result<i128, Error> {
         // Require authorization from the agent owner
         let agent_addr: Address = env
@@ -702,13 +887,28 @@ impl GameRegistry {
         agent.status = AgentStatus::Withdrawn;
         agent.heart_balance = 0;
 
-        agents.set(agent_id, agent);
+        agents.set(agent_id.clone(), agent);
         env.storage().persistent().set(&AGENTS_KEY, &agents);
+
+        // Emit withdrawal event
+        let current_ledger = env.ledger().sequence();
+        env.events().publish(
+            (symbol_short!("WITHDRAW"), agent_id.clone()),
+            AgentWithdrawnEvent {
+                agent_id,
+                refund: agent_refund,
+                prize_contribution,
+                ledger: current_ledger,
+            },
+        );
 
         Ok(agent_refund)
     }
 
-    /// Claim prize at season end
+    /// @notice Claim prize at season end
+    /// @dev Prize is distributed proportionally to activity score among all survivors
+    /// @param agent_id The unique identifier of the agent claiming the prize
+    /// @return share The amount of XLM claimed as prize
     pub fn claim_prize(env: Env, agent_id: BytesN<32>) -> Result<i128, Error> {
         // Check if season ended
         let season_data: (u32, u32, bool) = env
@@ -749,22 +949,52 @@ impl GameRegistry {
             return Err(Error::NoPrizeToClaim);
         }
 
-        // Calculate prize share
+        // Check for division by zero on prize pool
         let prize_pool: i128 = env
             .storage()
             .instance()
             .get(&PRIZE_POOL_KEY)
             .unwrap_or(0);
+        
+        if prize_pool == 0 {
+            return Err(Error::PrizePoolEmpty);
+        }
 
-        let share = prize_pool * agent.activity_score as i128 / total_survivor_score as i128;
+        // Calculate prize share with proper checked arithmetic
+        let share = (prize_pool as i128)
+            .checked_mul(agent.activity_score as i128)
+            .ok_or(Error::Overflow)?
+            .checked_div(total_survivor_score as i128)
+            .ok_or(Error::DivisionByZero)?;
+
+        // CRITICAL: Check if prize already claimed - prevent double-claiming
+        if agent.prize_claimed {
+            return Err(Error::PrizeAlreadyClaimed);
+        }
 
         // Update agent
         let mut agent_mut = agent.clone();
-        agent_mut.heart_balance += share;
-        agent_mut.total_earned += share;
+        agent_mut.heart_balance = agent_mut.heart_balance
+            .checked_add(share)
+            .ok_or(Error::Overflow)?;
+        agent_mut.total_earned = agent_mut.total_earned
+            .checked_add(share)
+            .ok_or(Error::Overflow)?;
+        agent_mut.prize_claimed = true; // Mark prize as claimed
 
-        agents.set(agent_id, agent_mut);
+        agents.set(agent_id.clone(), agent_mut);
         env.storage().persistent().set(&AGENTS_KEY, &agents);
+
+        // Emit prize claimed event
+        let current_ledger = env.ledger().sequence();
+        env.events().publish(
+            (symbol_short!("PRIZE"), agent_id.clone()),
+            PrizeClaimedEvent {
+                agent_id,
+                prize_amount: share,
+                ledger: current_ledger,
+            },
+        );
 
         Ok(share)
     }
@@ -773,7 +1003,17 @@ impl GameRegistry {
     // READ-ONLY FUNCTIONS
     // =========================================================================
 
-    /// Get all agents (summary info)
+    /// @notice Get the total count of registered agents in the current season
+    /// @return count The number of agents registered
+    pub fn get_agent_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&AGENT_COUNT_KEY)
+            .unwrap_or(0)
+    }
+
+    /// @notice Get all agents (summary info)
+    /// @return Vec<AgentSummary> A list of all registered agents with summary data
     pub fn get_all_agents(env: Env) -> Vec<AgentSummary> {
         let agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -806,7 +1046,8 @@ impl GameRegistry {
         result
     }
 
-    /// Get vulnerable agents (wounded or near deadline)
+    /// @notice Get vulnerable agents (wounded or near deadline)
+    /// @return Vec<AgentSummary> A list of agents that are wounded or within 2 pulse periods of deadline
     pub fn get_vulnerable_agents(env: Env) -> Vec<AgentSummary> {
         let agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -862,7 +1103,8 @@ impl GameRegistry {
         result
     }
 
-    /// Get dead agents (liquidatable)
+    /// @notice Get dead agents (liquidatable)
+    /// @return Vec<AgentSummary> A list of dead agents with balance > 0
     pub fn get_dead_agents(env: Env) -> Vec<AgentSummary> {
         let agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -906,7 +1148,9 @@ impl GameRegistry {
         result
     }
 
-    /// Get detailed info for a specific agent
+    /// @notice Get detailed info for a specific agent
+    /// @param id The unique 32-byte identifier of the agent
+    /// @return AgentRecord The full agent record with all details
     pub fn get_agent_detail(env: Env, id: BytesN<32>) -> Result<AgentRecord, Error> {
         let agents: Map<BytesN<32>, AgentRecord> = env
             .storage()
@@ -917,7 +1161,8 @@ impl GameRegistry {
         agents.get(id).ok_or(Error::AgentNotFound)
     }
 
-    /// Get current season state
+    /// @notice Get current season state
+    /// @return SeasonState The current season state including round info and agent counts
     pub fn get_season_state(env: Env) -> Result<SeasonState, Error> {
         let season_id: u32 = env
             .storage()
@@ -977,7 +1222,8 @@ impl GameRegistry {
         })
     }
 
-    /// Get the protocol fee address
+    /// @notice Get the protocol fee address
+    /// @return Address The address that receives 5% of pulse fees
     pub fn get_protocol_fee_address(env: Env) -> Result<Address, Error> {
         env.storage()
             .instance()
@@ -985,7 +1231,8 @@ impl GameRegistry {
             .ok_or(Error::NotInitialized)
     }
 
-    /// Get current prize pool amount
+    /// @notice Get current prize pool amount
+    /// @return i128 The current prize pool balance in stroops
     pub fn get_prize_pool(env: Env) -> i128 {
         env.storage()
             .instance()
