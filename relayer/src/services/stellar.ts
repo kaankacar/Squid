@@ -87,8 +87,11 @@ export class StellarService {
       });
 
       // Queue the transaction
+      // Performance optimization: Precompute the transaction hash here to avoid
+      // expensive XDR parsing during repeated status checks in getTransactionStatus
       const queuedTx: QueuedTransaction = {
         id: txId,
+        hash: transaction.hash().toString('hex'),
         signedXdr: request.signedXdr,
         status: TransactionStatus.PENDING,
         retries: 0,
@@ -235,7 +238,7 @@ export class StellarService {
     try {
       // First check if it's in our pending queue
       for (const [id, tx] of this.pendingTransactions) {
-        if (id === txHash || this.extractHashFromXdr(tx.signedXdr) === txHash) {
+        if (id === txHash || tx.hash === txHash) {
           return {
             transactionHash: txHash,
             status: tx.status,
@@ -385,18 +388,6 @@ export class StellarService {
    */
   private generateTxId(): string {
     return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  }
-
-  /**
-   * Extract hash from XDR (for pending lookup)
-   */
-  private extractHashFromXdr(xdr: string): string {
-    try {
-      const tx = TransactionBuilder.fromXDR(xdr, this.networkPassphrase) as Transaction;
-      return tx.hash().toString('hex');
-    } catch {
-      return '';
-    }
   }
 
   /**

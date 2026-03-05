@@ -1,0 +1,3 @@
+## 2024-05-20 - [Precompute transaction hash to avoid repeated XDR parsing]
+**Learning:** Parsing Stellar XDR using `TransactionBuilder.fromXDR` is highly resource-intensive in Node.js. In `relayer/src/services/stellar.ts` and `defender.ts`, this was being done repeatedly inside a `for` loop in `getTransactionStatus` when searching the `pendingTransactions` queue.
+**Action:** When a transaction is first added to the pending queue, compute and store its hash (`transaction.hash().toString('hex')`) in the queue object. Then, inside loops or lookup methods, just compare the precomputed hash instead of parsing the XDR again. This trades a tiny amount of memory for a significant CPU speedup during transaction polling.
