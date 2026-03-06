@@ -1,0 +1,3 @@
+## 2024-03-06 - Avoid redundant Stellar XDR parsing in loops
+**Learning:** Parsing Stellar XDR using `TransactionBuilder.fromXDR` is highly resource-intensive and blocks the main thread. We identified a bottleneck in `getTransactionStatus` where `extractHashFromXdr(tx.signedXdr)` was being called inside a loop over `pendingTransactions` for every status check, meaning $O(N)$ expensive XDR deserializations were performed on identical string payloads simply to compute their hashes.
+**Action:** Always precompute and cache derived immutable properties like transaction hashes at the point of ingestion (e.g., in `submitTransaction`), storing them in persistent structures (like `QueuedTransaction`). Never perform XDR deserialization inside loops or frequent getter paths.

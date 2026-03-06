@@ -103,6 +103,7 @@ export interface RelayError {
 export interface QueuedTransaction {
   id: string;
   signedXdr: string;
+  transactionHash: string; // Precomputed hash to avoid redundant XDR parsing
   status: TransactionStatus;
   retries: number;
   submittedAt: Date;

@@ -90,6 +90,7 @@ export class StellarService {
       const queuedTx: QueuedTransaction = {
         id: txId,
         signedXdr: request.signedXdr,
+        transactionHash: transaction.hash().toString('hex'),
         status: TransactionStatus.PENDING,
         retries: 0,
         submittedAt: new Date(),
@@ -235,7 +236,7 @@ export class StellarService {
     try {
       // First check if it's in our pending queue
       for (const [id, tx] of this.pendingTransactions) {
-        if (id === txHash || this.extractHashFromXdr(tx.signedXdr) === txHash) {
+        if (id === txHash || tx.transactionHash === txHash) {
           return {
             transactionHash: txHash,
             status: tx.status,
@@ -385,18 +386,6 @@ export class StellarService {
    */
   private generateTxId(): string {
     return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  }
-
-  /**
-   * Extract hash from XDR (for pending lookup)
-   */
-  private extractHashFromXdr(xdr: string): string {
-    try {
-      const tx = TransactionBuilder.fromXDR(xdr, this.networkPassphrase) as Transaction;
-      return tx.hash().toString('hex');
-    } catch {
-      return '';
-    }
   }
 
   /**
