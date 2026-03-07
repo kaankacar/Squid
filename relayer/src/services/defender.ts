@@ -9,6 +9,7 @@ import {
   Transaction,
   Networks,
 } from '@stellar/stellar-sdk';
+import crypto from 'crypto';
 import logger from '../utils/logger';
 import {
   RelayRequest,
@@ -61,7 +62,7 @@ export class DefenderService {
    */
   async initialize(): Promise<void> {
     try {
-      const relayer = await this.client.relay.getRelayer(this.relayerId);
+      const relayer = await this.client.relaySigner.getRelayer(this.relayerId);
       this.relayerAddress = relayer.address;
       logger.info('Defender relayer loaded', {
         relayerId: this.relayerId,
@@ -118,6 +119,7 @@ export class DefenderService {
       // Queue the transaction
       const queuedTx: QueuedTransaction = {
         id: txId,
+        hash: transaction.hash().toString('hex'),
         signedXdr: request.signedXdr,
         status: TransactionStatus.PENDING,
         retries: 0,
@@ -203,7 +205,7 @@ export class DefenderService {
         // Submit via Defender Relayer
         // Note: Defender's signAndSendTransaction is used for EVM chains
         // For Stellar, we use the relayer's built-in transaction submission
-        const response = await this.client.relay.sendTransaction({
+        const response = await this.client.relaySigner.sendTransaction({
           relayerId: this.relayerId,
           // For Stellar, we pass the signed XDR directly
           data: signedXdr,
@@ -284,7 +286,7 @@ export class DefenderService {
     try {
       // First check if it's in our pending queue
       for (const [id, tx] of this.pendingTransactions) {
-        if (id === txHash || this.extractHashFromXdr(tx.signedXdr) === txHash) {
+        if (id === txHash || tx.hash === txHash) {
           return {
             transactionHash: txHash,
             status: tx.status,
@@ -406,7 +408,7 @@ export class DefenderService {
    */
   async isDefenderConnected(): Promise<boolean> {
     try {
-      const relayer = await this.client.relay.getRelayer(this.relayerId);
+      const relayer = await this.client.relaySigner.getRelayer(this.relayerId);
       return relayer.active !== false;
     } catch {
       return false;
@@ -438,19 +440,7 @@ export class DefenderService {
    * Generate unique transaction ID
    */
   private generateTxId(): string {
-    return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-  }
-
-  /**
-   * Extract hash from XDR (for pending lookup)
-   */
-  private extractHashFromXdr(xdr: string): string {
-    try {
-      const tx = TransactionBuilder.fromXDR(xdr, this.networkPassphrase) as Transaction;
-      return tx.hash().toString('hex');
-    } catch {
-      return '';
-    }
+    return `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   }
 
   /**
