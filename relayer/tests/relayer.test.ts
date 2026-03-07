@@ -10,7 +10,7 @@ jest.mock('../src/services/stellar');
 
 describe('RelayerService', () => {
   let relayerService: RelayerService;
-  let mockStellarService: jest.Mocked<StellarService>;
+  let mockStellarService: any;
   const mockConfig: RelayerConfig = {
     port: 3000,
     network: 'testnet',
@@ -30,12 +30,13 @@ describe('RelayerService', () => {
     jest.clearAllMocks();
     jest.useFakeTimers();
 
-    mockStellarService = new StellarService(mockConfig) as jest.Mocked<StellarService>;
+    mockStellarService = new StellarService(mockConfig) as any;
     mockStellarService.getRelayerPublicKey.mockReturnValue('GRELAYERADDRESS');
     mockStellarService.getNetwork.mockReturnValue('testnet');
     mockStellarService.getRelayerBalance.mockResolvedValue('100.5');
     mockStellarService.isHorizonConnected.mockResolvedValue(true);
     mockStellarService.isRpcConnected.mockResolvedValue(true);
+    mockStellarService.isDefenderConnected = jest.fn().mockResolvedValue(true);
     mockStellarService.getPendingCount.mockReturnValue(0);
 
     relayerService = new RelayerService(mockStellarService, mockConfig);
