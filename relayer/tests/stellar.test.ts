@@ -8,10 +8,20 @@ import { TransactionStatus } from '../src/types';
 jest.mock('@stellar/stellar-sdk', () => ({
   Horizon: {
     Server: jest.fn().mockImplementation(() => ({
-      submitTransaction: jest.fn(),
+      submitTransaction: jest.fn().mockResolvedValue({
+        hash: 'abc123',
+        ledger: 12345,
+      }),
       ledgers: jest.fn().mockReturnValue({
         order: jest.fn().mockReturnValue({
-          limit: jest.fn().mockResolvedValue({
+          limit: jest.fn().mockReturnValue({
+            call: jest.fn().mockResolvedValue({
+              records: [{ sequence: 12345 }],
+            }),
+          }),
+        }),
+        limit: jest.fn().mockReturnValue({
+          call: jest.fn().mockResolvedValue({
             records: [{ sequence: 12345 }],
           }),
         }),
@@ -51,7 +61,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
       sequence: '123',
       operations: [{ type: 'payment' }],
       fee: '100',
-      hash: jest.fn().mockReturnValue(Buffer.from('abc123')),
+      hash: jest.fn().mockReturnValue(Buffer.from('abc123', 'utf8')),
     })),
   },
   Networks: {
@@ -104,6 +114,11 @@ describe('StellarService', () => {
     });
 
     it('should handle missing XDR', async () => {
+      const { TransactionBuilder } = require('@stellar/stellar-sdk');
+      TransactionBuilder.fromXDR.mockImplementationOnce(() => {
+        throw new Error('Missing XDR');
+      });
+
       const request = {
         signedXdr: '',
       };

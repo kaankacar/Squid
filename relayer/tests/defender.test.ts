@@ -10,7 +10,14 @@ jest.mock('@stellar/stellar-sdk', () => ({
     Server: jest.fn().mockImplementation(() => ({
       ledgers: jest.fn().mockReturnValue({
         order: jest.fn().mockReturnValue({
-          limit: jest.fn().mockResolvedValue({
+          limit: jest.fn().mockReturnValue({
+            call: jest.fn().mockResolvedValue({
+              records: [{ sequence: 12345 }],
+            }),
+          }),
+        }),
+        limit: jest.fn().mockReturnValue({
+          call: jest.fn().mockResolvedValue({
             records: [{ sequence: 12345 }],
           }),
         }),
@@ -45,7 +52,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
       sequence: '123',
       operations: [{ type: 'payment' }],
       fee: '100',
-      hash: jest.fn().mockReturnValue(Buffer.from('abc123')),
+      hash: jest.fn().mockReturnValue(Buffer.from('abc123', 'utf8')),
     })),
   },
   Networks: {
@@ -62,7 +69,7 @@ const mockGetRelayer = jest.fn();
 
 jest.mock('@openzeppelin/defender-sdk', () => ({
   Defender: jest.fn().mockImplementation(() => ({
-    relay: {
+    relaySigner: {
       sendTransaction: mockSendTransaction,
       getRelayer: mockGetRelayer,
     },
