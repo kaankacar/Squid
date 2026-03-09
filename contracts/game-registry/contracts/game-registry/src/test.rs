@@ -2644,3 +2644,29 @@ fn test_exact_streak_bonus_boundaries() {
 // =============================================================================
 // ADDITIONAL TOTAL: 29+ NEW TESTS (existing ~30 + 29 = 59+ tests)
 // =============================================================================
+
+#[test]
+fn bench_get_season_state() {
+    let env = setup_env();
+    let (client, _) = setup_contract(&env);
+    client.init_season();
+
+    let num_agents = 100;
+    for i in 0..num_agents {
+        register_agent(&env, &client, i as u8);
+    }
+
+    env.budget().reset_default();
+    let start_cpu = env.budget().cpu_instruction_count();
+    let start_mem = env.budget().memory_bytes_count();
+
+    let _state = client.get_season_state();
+
+    let end_cpu = env.budget().cpu_instruction_count();
+    let end_mem = env.budget().memory_bytes_count();
+
+    extern crate std;
+    std::println!("Benchmark get_season_state with {} agents:", num_agents);
+    std::println!("CPU instructions: {}", end_cpu - start_cpu);
+    std::println!("Memory bytes: {}", end_mem - start_mem);
+}
