@@ -1,0 +1,3 @@
+## 2026-03-09 - Soroban Contract Read Optimization
+**Learning:** Performing read-only queries on Soroban requires building a dummy transaction and using `simulateTransaction`. Mapping the resulting `ScVal` back to native TypeScript types can be tedious if many fields are involved, and naming conventions often differ between the Rust contract (snake_case) and TypeScript client (camelCase).
+**Action:** Use a reusable `queryContract` helper and dedicated mapping functions for each contract data structure. Always verify field names against the Rust contract source to ensure correct mapping of potentially differing naming conventions.
