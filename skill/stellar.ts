@@ -373,8 +373,11 @@ export class StellarSquidClient {
     if (!this.contractId) return null;
 
     try {
-      // TODO: Implement contract query
-      return null;
+      const result = await this.queryContract(this.contractId, 'get_status');
+      if (!result) return null;
+
+      const native = scValToNative(result);
+      return this.mapAgentRecord(native);
     } catch (error) {
       console.error('Failed to get agent status:', error);
       return null;
@@ -392,8 +395,11 @@ export class StellarSquidClient {
     if (!this.config.gameRegistry) return [];
     
     try {
-      // TODO: Implement GameRegistry query
-      return [];
+      const result = await this.queryContract(this.config.gameRegistry, 'get_all_agents');
+      if (!result) return [];
+
+      const native = scValToNative(result) as any[];
+      return native.map((a) => this.mapAgentSummary(a));
     } catch (error) {
       console.error('Failed to get all agents:', error);
       return [];
@@ -407,8 +413,11 @@ export class StellarSquidClient {
     if (!this.config.gameRegistry) return [];
     
     try {
-      // TODO: Implement GameRegistry query
-      return [];
+      const result = await this.queryContract(this.config.gameRegistry, 'get_dead_agents');
+      if (!result) return [];
+
+      const native = scValToNative(result) as any[];
+      return native.map((a) => this.mapAgentSummary(a));
     } catch (error) {
       console.error('Failed to get dead agents:', error);
       return [];
@@ -422,8 +431,11 @@ export class StellarSquidClient {
     if (!this.config.gameRegistry) return [];
     
     try {
-      // TODO: Implement GameRegistry query
-      return [];
+      const result = await this.queryContract(this.config.gameRegistry, 'get_vulnerable_agents');
+      if (!result) return [];
+
+      const native = scValToNative(result) as any[];
+      return native.map((a) => this.mapAgentSummary(a));
     } catch (error) {
       console.error('Failed to get vulnerable agents:', error);
       return [];
@@ -437,10 +449,130 @@ export class StellarSquidClient {
     if (!this.config.gameRegistry) return null;
     
     try {
-      // TODO: Implement GameRegistry query
-      return null;
+      const result = await this.queryContract(this.config.gameRegistry, 'get_season_state');
+      if (!result) return null;
+
+      const native = scValToNative(result);
+      return this.mapSeasonState(native);
     } catch (error) {
       console.error('Failed to get season state:', error);
+      return null;
+    }
+  }
+
+  // ==========================================================================
+  // Private Helpers
+  // ==========================================================================
+
+  /**
+   * Map ScVal status to AgentStatus enum
+   */
+  private mapAgentStatus(val: any): AgentStatus {
+    // Enum values from contract: Alive=0, Wounded=1, Dead=2, Withdrawn=3
+    // Or it might be the Symbol names: "Alive", "Wounded", etc.
+    const statusStr = typeof val === 'string' ? val : String(val);
+
+    switch (statusStr) {
+      case 'Alive':
+      case '0':
+        return AgentStatus.Alive;
+      case 'Wounded':
+      case '1':
+        return AgentStatus.Wounded;
+      case 'Dead':
+      case '2':
+        return AgentStatus.Dead;
+      case 'Withdrawn':
+      case '3':
+        return AgentStatus.Withdrawn;
+      default:
+        return AgentStatus.Alive;
+    }
+  }
+
+  /**
+   * Map contract AgentSummary to TypeScript AgentSummary
+   */
+  private mapAgentSummary(raw: any): AgentSummary {
+    return {
+      agentId: raw.agent_id.toString('hex'),
+      contractAddress: raw.contract_address ? raw.contract_address.toString() : '',
+      status: this.mapAgentStatus(raw.status),
+      deadlineLedger: Number(raw.deadline_ledger),
+      graceDeadline: Number(raw.grace_deadline),
+      ledgersRemaining: Number(raw.ledgers_remaining),
+      heartBalance: raw.heart_balance.toString(),
+      activityScore: Number(raw.activity_score),
+      woundCount: Number(raw.wound_count),
+    };
+  }
+
+  /**
+   * Map contract AgentRecord to TypeScript AgentRecord
+   */
+  private mapAgentRecord(raw: any): AgentRecord {
+    return {
+      ...this.mapAgentSummary(raw),
+      owner: raw.owner.toString(),
+      seasonId: Number(raw.season_id),
+      lastPulseLedger: Number(raw.last_pulse_ledger),
+      streakCount: Number(raw.streak_count),
+      totalEarned: raw.total_earned.toString(),
+      totalSpent: raw.total_spent.toString(),
+      killCount: Number(raw.kill_count),
+    };
+  }
+
+  /**
+   * Map contract SeasonState to TypeScript SeasonState
+   */
+  private mapSeasonState(raw: any): SeasonState {
+    return {
+      seasonId: Number(raw.season_id),
+      currentRound: Number(raw.current_round),
+      totalAgents: Number(raw.total_agents),
+      aliveAgents: Number(raw.alive_agents),
+      prizePool: raw.prize_pool.toString(),
+      startLedger: Number(raw.start_ledger || 0),
+      endLedger: raw.season_ended ? Number(raw.round_deadline) : null,
+    };
+  }
+
+  /**
+   * Perform a read-only query to a Soroban contract
+   */
+  private async queryContract(
+    contractId: string,
+    functionName: string,
+    args: xdr.ScVal[] = []
+  ): Promise<xdr.ScVal | null> {
+    try {
+      const contract = new Contract(contractId);
+      const op = contract.call(functionName, ...args);
+
+      // Create a dummy account for simulation
+      // Sequence number doesn't matter for simulation
+      const sourcePublicKey = this.keypair?.publicKey() || Keypair.random().publicKey();
+      const account = new SorobanRpc.Account(sourcePublicKey, '0');
+
+      const tx = new TransactionBuilder(account, {
+        fee: '100',
+        networkPassphrase: this.networkConfig.passphrase,
+      })
+        .addOperation(op)
+        .setTimeout(30)
+        .build();
+
+      const result = await this.rpc.simulateTransaction(tx);
+
+      if (SorobanRpc.Api.isSimulationSuccess(result)) {
+        return result.result?.retval || null;
+      }
+
+      console.warn(`Simulation failed for ${functionName}:`, result);
+      return null;
+    } catch (error) {
+      console.error(`Contract query failed (${functionName}):`, error);
       return null;
     }
   }
