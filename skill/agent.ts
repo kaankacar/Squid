@@ -165,7 +165,6 @@ export class StellarSquidAgent {
     
     console.log('=== AGENT KEYPAIR GENERATED ===');
     console.log(`Public Key: ${keypair.publicKey}`);
-    console.log(`Secret Key: ${keypair.secretKey}`);
     console.log('');
     console.log('⚠️  SAVE YOUR SECRET KEY SAFELY!');
     console.log('');
@@ -720,8 +719,16 @@ export class StellarSquidAgent {
    * Show full agent state for debugging
    */
   debug(): void {
+    const redactedState = {
+      ...this.state,
+      keypair: {
+        ...this.state.keypair,
+        secretKey: '[REDACTED]',
+      },
+    };
+
     console.log('\n=== DEBUG STATE ===');
-    console.log('Agent State:', JSON.stringify(this.state, null, 2));
+    console.log('Agent State:', JSON.stringify(redactedState, null, 2));
     console.log('Loop State:', JSON.stringify(this.loopState, null, 2));
     console.log('Config:', JSON.stringify(this.config, null, 2));
     console.log('===================\n');
