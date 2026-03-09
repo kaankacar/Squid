@@ -118,8 +118,8 @@ export class DefenderService {
       // Queue the transaction
       const queuedTx: QueuedTransaction = {
         id: txId,
-        signedXdr: request.signedXdr,
         transactionHash: transaction.hash().toString('hex'),
+        signedXdr: request.signedXdr,
         status: TransactionStatus.PENDING,
         retries: 0,
         submittedAt: new Date(),
