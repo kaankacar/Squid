@@ -116,9 +116,11 @@ export class DefenderService {
       });
 
       // Queue the transaction
+      // Performance optimization: Precompute the transaction hash here to avoid
+      // expensive XDR parsing during repeated status checks in getTransactionStatus
       const queuedTx: QueuedTransaction = {
         id: txId,
-        transactionHash: transaction.hash().toString('hex'),
+        hash: transaction.hash().toString('hex'),
         signedXdr: request.signedXdr,
         status: TransactionStatus.PENDING,
         retries: 0,
@@ -285,7 +287,7 @@ export class DefenderService {
     try {
       // First check if it's in our pending queue
       for (const [id, tx] of this.pendingTransactions) {
-        if (id === txHash || tx.transactionHash === txHash) {
+        if (id === txHash || tx.hash === txHash) {
           return {
             transactionHash: txHash,
             status: tx.status,
