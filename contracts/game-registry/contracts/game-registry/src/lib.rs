@@ -46,6 +46,8 @@ pub const PRIZE_POOL_KEY: Symbol = symbol_short!("PRIZE");
 pub const PROTOCOL_FEE_KEY: Symbol = symbol_short!("PROTOCOL");
 pub const AGENTS_KEY: Symbol = symbol_short!("AGENTS");
 pub const AGENT_COUNT_KEY: Symbol = symbol_short!("AGENTCNT");
+pub const ALIVE_COUNT_KEY: Symbol = symbol_short!("ALIVECNT");
+pub const DEAD_COUNT_KEY: Symbol = symbol_short!("DEADCNT");
 pub const SEASON_DATA_KEY: Symbol = symbol_short!("SEASDATA");
 
 // Maximum number of agents allowed per season
@@ -336,6 +338,8 @@ impl GameRegistry {
 
         // Initialize agent count to 0
         env.storage().instance().set(&AGENT_COUNT_KEY, &0_u32);
+        env.storage().instance().set(&ALIVE_COUNT_KEY, &0_u32);
+        env.storage().instance().set(&DEAD_COUNT_KEY, &0_u32);
 
         // Initialize season to 0 (no season active)
         env.storage().instance().set(&SEASON_START_KEY, &0_u32);
@@ -379,6 +383,8 @@ impl GameRegistry {
 
         // Reset agent count
         env.storage().instance().set(&AGENT_COUNT_KEY, &0_u32);
+        env.storage().instance().set(&ALIVE_COUNT_KEY, &0_u32);
+        env.storage().instance().set(&DEAD_COUNT_KEY, &0_u32);
 
         // Initialize round 1
         let config = get_round_config(&env, 1);
@@ -495,6 +501,16 @@ impl GameRegistry {
         env.storage()
             .instance()
             .set(&AGENT_COUNT_KEY, &(count + 1));
+
+        // Increment alive count
+        let alive_count: u32 = env
+            .storage()
+            .instance()
+            .get(&ALIVE_COUNT_KEY)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&ALIVE_COUNT_KEY, &(alive_count + 1));
 
         // Emit registration event
         env.events().publish(
@@ -723,6 +739,21 @@ impl GameRegistry {
             .ok_or(Error::AgentNotFound)?;
 
         let mut agent = agents.get(agent_id.clone()).ok_or(Error::AgentNotFound)?;
+
+        // Update counts if status is changing from Alive/Wounded to Dead
+        match agent.status {
+            AgentStatus::Alive | AgentStatus::Wounded => {
+                let alive_count: u32 = env.storage().instance().get(&ALIVE_COUNT_KEY).unwrap_or(0);
+                if alive_count > 0 {
+                    env.storage().instance().set(&ALIVE_COUNT_KEY, &(alive_count - 1));
+                }
+
+                let dead_count: u32 = env.storage().instance().get(&DEAD_COUNT_KEY).unwrap_or(0);
+                env.storage().instance().set(&DEAD_COUNT_KEY, &(dead_count + 1));
+            }
+            _ => {}
+        }
+
         agent.status = AgentStatus::Dead;
 
         agents.set(agent_id, agent);
@@ -882,6 +913,17 @@ impl GameRegistry {
         env.storage()
             .instance()
             .set(&PRIZE_POOL_KEY, &new_prize_pool);
+
+        // Update counts if status is changing from Alive/Wounded to Withdrawn
+        match agent.status {
+            AgentStatus::Alive | AgentStatus::Wounded => {
+                let alive_count: u32 = env.storage().instance().get(&ALIVE_COUNT_KEY).unwrap_or(0);
+                if alive_count > 0 {
+                    env.storage().instance().set(&ALIVE_COUNT_KEY, &(alive_count - 1));
+                }
+            }
+            _ => {}
+        }
 
         // Mark agent as withdrawn
         agent.status = AgentStatus::Withdrawn;
@@ -1188,23 +1230,22 @@ impl GameRegistry {
             .unwrap_or(0);
 
         // Count agents
-        let agents: Map<BytesN<32>, AgentRecord> = env
+        let agents_len = env
             .storage()
-            .persistent()
-            .get(&AGENTS_KEY)
-            .unwrap_or(Map::new(&env));
+            .instance()
+            .get(&AGENT_COUNT_KEY)
+            .unwrap_or(0);
 
-        let mut alive = 0u32;
-        let mut dead = 0u32;
-
-        for (_, agent) in agents.iter() {
-            match agent.status {
-                AgentStatus::Alive => alive += 1,
-                AgentStatus::Dead => dead += 1,
-                AgentStatus::Wounded => alive += 1, // Wounded still counts as alive
-                _ => {}
-            }
-        }
+        let alive = env
+            .storage()
+            .instance()
+            .get(&ALIVE_COUNT_KEY)
+            .unwrap_or(0);
+        let dead = env
+            .storage()
+            .instance()
+            .get(&DEAD_COUNT_KEY)
+            .unwrap_or(0);
 
         Ok(SeasonState {
             season_id,
@@ -1214,7 +1255,7 @@ impl GameRegistry {
             pulse_cost: config.pulse_cost,
             pulse_period: config.pulse_period,
             grace_period: config.grace_period,
-            total_agents: agents.len() as u32,
+            total_agents: agents_len,
             alive_agents: alive,
             dead_agents: dead,
             prize_pool,
