@@ -88,6 +88,8 @@ export class StellarService {
       });
 
       // Queue the transaction
+      // Performance optimization: Precompute the transaction hash here to avoid
+      // expensive XDR parsing during repeated status checks in getTransactionStatus
       const queuedTx: QueuedTransaction = {
         id: txId,
         hash: transaction.hash().toString('hex'),
