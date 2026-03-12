@@ -2,6 +2,7 @@
  * Stellar Service - Blockchain Interactions
  * Handles all Stellar network operations
  */
+import crypto from 'crypto';
 import {
   Horizon,
   TransactionBuilder,
@@ -289,18 +290,19 @@ export class StellarService {
    */
   async estimateFees(request: FeeEstimateRequest): Promise<FeeEstimateResponse> {
     try {
-      // Get the latest ledger info
-      const ledgerInfo = await this.horizon.ledgers().order('desc').limit(1).call();
-      const latestLedger = ledgerInfo.records[0];
+      // Start network requests concurrently
+      const ledgerPromise = this.horizon.ledgers().order('desc').limit(1).call();
+      const feeStatsPromise = this.horizon.feeStats();
 
-      // Parse the transaction to get base fee
+      // Parse the transaction to get base fee (CPU bound, do while waiting for network)
       const transaction = TransactionBuilder.fromXDR(
         request.xdr,
         this.networkPassphrase
       ) as Transaction;
 
-      // Get fee stats from network
-      const feeStats = await this.horizon.feeStats();
+      // Await both network requests
+      const [ledgerInfo, feeStats] = await Promise.all([ledgerPromise, feeStatsPromise]);
+      const latestLedger = ledgerInfo.records[0];
 
       // Calculate suggested fee based on network conditions
       const baseFee = parseInt(transaction.fee) / transaction.operations.length;
@@ -387,7 +389,7 @@ export class StellarService {
    * Generate unique transaction ID
    */
   private generateTxId(): string {
-    return `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    return `tx_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
   }
 
   /**
