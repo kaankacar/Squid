@@ -416,10 +416,12 @@ export class StellarSquidAgent {
    */
   private async evaluateStrategy(): Promise<StrategyDecision> {
     const now = Date.now();
-    const currentLedger = await this.client.getCurrentLedger();
-
-    // Get agent status
-    const agentStatus = await this.client.getAgentStatus();
+    // ⚡ Bolt Optimization: Parallelize independent ledger and status fetching via Promise.all
+    // This reduces the time it takes to fetch the current state, ensuring the survival loop isn't blocked by sequential requests.
+    const [currentLedger, agentStatus] = await Promise.all([
+      this.client.getCurrentLedger(),
+      this.client.getAgentStatus()
+    ]);
     if (agentStatus) {
       this.updateStateFromRecord(agentStatus);
     }
@@ -577,9 +579,13 @@ export class StellarSquidAgent {
   async scan(): Promise<AgentSummary[]> {
     console.log('🔍 Scanning for targets...');
     
-    const allAgents = await this.client.getAllAgents();
-    const deadAgents = await this.client.getDeadAgents();
-    const vulnerableAgents = await this.client.getVulnerableAgents();
+    // ⚡ Bolt Optimization: Parallelize independent smart contract queries via Promise.all
+    // This reduces network latency and speeds up the target scanning process.
+    const [allAgents, deadAgents, vulnerableAgents] = await Promise.all([
+      this.client.getAllAgents(),
+      this.client.getDeadAgents(),
+      this.client.getVulnerableAgents()
+    ]);
     
     this.loopState.lastScan = Date.now();
     this.loopState.scanCache = allAgents;
