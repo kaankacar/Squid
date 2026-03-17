@@ -416,10 +416,13 @@ export class StellarSquidAgent {
    */
   private async evaluateStrategy(): Promise<StrategyDecision> {
     const now = Date.now();
-    const currentLedger = await this.client.getCurrentLedger();
 
-    // Get agent status
-    const agentStatus = await this.client.getAgentStatus();
+    // Performance optimization: fetch ledger and agent status concurrently
+    const [currentLedger, agentStatus] = await Promise.all([
+      this.client.getCurrentLedger(),
+      this.client.getAgentStatus()
+    ]);
+
     if (agentStatus) {
       this.updateStateFromRecord(agentStatus);
     }
@@ -577,9 +580,12 @@ export class StellarSquidAgent {
   async scan(): Promise<AgentSummary[]> {
     console.log('🔍 Scanning for targets...');
     
-    const allAgents = await this.client.getAllAgents();
-    const deadAgents = await this.client.getDeadAgents();
-    const vulnerableAgents = await this.client.getVulnerableAgents();
+    // Performance optimization: fetch agent lists concurrently
+    const [allAgents, deadAgents, vulnerableAgents] = await Promise.all([
+      this.client.getAllAgents(),
+      this.client.getDeadAgents(),
+      this.client.getVulnerableAgents()
+    ]);
     
     this.loopState.lastScan = Date.now();
     this.loopState.scanCache = allAgents;
