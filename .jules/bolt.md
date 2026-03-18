@@ -4,3 +4,6 @@
 ## 2024-05-21 - [Parallelize Horizon API Calls to Hide XDR Parsing Latency]
 **Learning:** `TransactionBuilder.fromXDR` is highly CPU-bound and can block the main thread for a non-trivial amount of time when estimating fees. When estimating fees, both `horizon.ledgers().call()` and `horizon.feeStats()` were being fetched sequentially, interspersed with the XDR parsing, accumulating overall wait time.
 **Action:** Always dispatch independent network requests (like `ledgers` and `feeStats`) concurrently via `Promise.all`. Furthermore, trigger these asynchronous requests *before* executing synchronous, CPU-heavy operations (like XDR parsing). This effectively hides the CPU-bound operation's latency inside the network round-trip time, reducing total request time by removing the blocking nature of the previous sequential layout.
+## 2026-03-18 - Parallelizing Network Queries
+**Learning:** Sequential network and contract calls (e.g. `await A; await B;`) add unnecessary latency and block the survival loop. Parallelizing them with `Promise.all()` significantly reduces overhead.
+**Action:** Use `Promise.all()` when making multiple independent Horizon or Soroban RPC calls.
