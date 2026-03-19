@@ -532,11 +532,18 @@ export class StellarSquidAgent {
 
   /**
    * Select best target for liquidation (highest balance)
+   * Optimization: Use reduce for O(N) lookup instead of sort()[0] for O(N log N)
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
-    return targets.sort((a, b) => 
-      parseFloat(b.heartBalance) - parseFloat(a.heartBalance)
-    )[0];
+    if (!targets || targets.length === 0) {
+      return undefined as unknown as AgentSummary;
+    }
+
+    return targets.reduce((best, current) => {
+      const bestBalance = parseFloat(best.heartBalance);
+      const currentBalance = parseFloat(current.heartBalance);
+      return currentBalance > bestBalance ? current : best;
+    });
   }
 
   /**
