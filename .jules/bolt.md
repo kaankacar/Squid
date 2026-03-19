@@ -4,3 +4,6 @@
 ## 2024-05-21 - [Parallelize Horizon API Calls to Hide XDR Parsing Latency]
 **Learning:** `TransactionBuilder.fromXDR` is highly CPU-bound and can block the main thread for a non-trivial amount of time when estimating fees. When estimating fees, both `horizon.ledgers().call()` and `horizon.feeStats()` were being fetched sequentially, interspersed with the XDR parsing, accumulating overall wait time.
 **Action:** Always dispatch independent network requests (like `ledgers` and `feeStats`) concurrently via `Promise.all`. Furthermore, trigger these asynchronous requests *before* executing synchronous, CPU-heavy operations (like XDR parsing). This effectively hides the CPU-bound operation's latency inside the network round-trip time, reducing total request time by removing the blocking nature of the previous sequential layout.
+## 2026-03-19 - [Replace sort()[0] with reduce() for maximum element search]
+**Learning:** Finding the maximum or minimum element in an array using `sort((a, b) => b - a)[0]` introduces an unnecessary O(N log N) time complexity overhead, especially noticeable when called frequently or on large lists.
+**Action:** Always replace O(N log N) `sort()[0]` array manipulations with an O(N) `reduce()` operation when searching for maximum or minimum values to improve performance.
