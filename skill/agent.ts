@@ -468,12 +468,14 @@ export class StellarSquidAgent {
       const deadAgents = await this.client.getDeadAgents();
       if (deadAgents.length > 0) {
         const bestTarget = this.selectBestLiquidationTarget(deadAgents);
-        return {
-          action: SurvivalAction.Liquidate,
-          priority: 3,
-          reason: `Dead agent found with ${bestTarget.heartBalance} XLM!`,
-          targetId: bestTarget.agentId,
-        };
+        if (bestTarget) {
+          return {
+            action: SurvivalAction.Liquidate,
+            priority: 3,
+            reason: `Dead agent found with ${bestTarget.heartBalance} XLM!`,
+            targetId: bestTarget.agentId,
+          };
+        }
       }
 
       return {
@@ -533,10 +535,12 @@ export class StellarSquidAgent {
   /**
    * Select best target for liquidation (highest balance)
    */
-  private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
-    return targets.sort((a, b) => 
-      parseFloat(b.heartBalance) - parseFloat(a.heartBalance)
-    )[0];
+  private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary | null {
+    if (!targets || targets.length === 0) return null;
+
+    return targets.reduce((best, current) => {
+      return parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best;
+    });
   }
 
   /**
@@ -577,9 +581,12 @@ export class StellarSquidAgent {
   async scan(): Promise<AgentSummary[]> {
     console.log('🔍 Scanning for targets...');
     
-    const allAgents = await this.client.getAllAgents();
-    const deadAgents = await this.client.getDeadAgents();
-    const vulnerableAgents = await this.client.getVulnerableAgents();
+    // ⚡ Bolt: Parallelize independent smart contract queries to hide network latency
+    const [allAgents, deadAgents, vulnerableAgents] = await Promise.all([
+      this.client.getAllAgents(),
+      this.client.getDeadAgents(),
+      this.client.getVulnerableAgents()
+    ]);
     
     this.loopState.lastScan = Date.now();
     this.loopState.scanCache = allAgents;
@@ -604,8 +611,10 @@ export class StellarSquidAgent {
     
     if (deadAgents.length > 0) {
       const target = this.selectBestLiquidationTarget(deadAgents);
-      console.log(`💀 Dead agent found: ${target.agentId} with ${target.heartBalance} XLM`);
-      await this.liquidate(target.agentId);
+      if (target) {
+        console.log(`💀 Dead agent found: ${target.agentId} with ${target.heartBalance} XLM`);
+        await this.liquidate(target.agentId);
+      }
     }
   }
 
