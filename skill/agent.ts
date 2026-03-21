@@ -534,9 +534,13 @@ export class StellarSquidAgent {
    * Select best target for liquidation (highest balance)
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
-    return targets.sort((a, b) => 
-      parseFloat(b.heartBalance) - parseFloat(a.heartBalance)
-    )[0];
+    if (targets.length === 0) {
+      throw new Error('Cannot select target from an empty array');
+    }
+    // Performance optimization: O(N) reduce instead of O(N log N) sort
+    return targets.reduce((best, current) =>
+      parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best
+    );
   }
 
   /**
@@ -577,9 +581,12 @@ export class StellarSquidAgent {
   async scan(): Promise<AgentSummary[]> {
     console.log('🔍 Scanning for targets...');
     
-    const allAgents = await this.client.getAllAgents();
-    const deadAgents = await this.client.getDeadAgents();
-    const vulnerableAgents = await this.client.getVulnerableAgents();
+    // Performance optimization: parallelize independent contract queries
+    const [allAgents, deadAgents, vulnerableAgents] = await Promise.all([
+      this.client.getAllAgents(),
+      this.client.getDeadAgents(),
+      this.client.getVulnerableAgents()
+    ]);
     
     this.loopState.lastScan = Date.now();
     this.loopState.scanCache = allAgents;
