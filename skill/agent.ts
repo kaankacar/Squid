@@ -534,9 +534,10 @@ export class StellarSquidAgent {
    * Select best target for liquidation (highest balance)
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
-    return targets.sort((a, b) => 
-      parseFloat(b.heartBalance) - parseFloat(a.heartBalance)
-    )[0];
+    if (targets.length === 0) return targets[0];
+    return targets.reduce((best, current) =>
+      parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best
+    );
   }
 
   /**
