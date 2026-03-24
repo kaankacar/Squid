@@ -535,9 +535,23 @@ export class StellarSquidAgent {
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
     if (targets.length === 0) return targets[0];
-    return targets.reduce((best, current) =>
-      parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best
-    );
+
+    // ⚡ Bolt: Use a for loop to cache the parsed max balance.
+    // This avoids redundant O(2N) parseFloat calls that would occur in a reduce()
+    // or sort() function comparing parsed values on every iteration.
+    let bestTarget = targets[0];
+    let bestBalance = parseFloat(bestTarget.heartBalance);
+
+    for (let i = 1; i < targets.length; i++) {
+      const currentTarget = targets[i];
+      const currentBalance = parseFloat(currentTarget.heartBalance);
+      if (currentBalance > bestBalance) {
+        bestBalance = currentBalance;
+        bestTarget = currentTarget;
+      }
+    }
+
+    return bestTarget;
   }
 
   /**
