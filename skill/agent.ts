@@ -532,12 +532,26 @@ export class StellarSquidAgent {
 
   /**
    * Select best target for liquidation (highest balance)
+   * Performance optimization: Caches the parsed maximum value to avoid redundant O(2N)
+   * parsing operations during array traversal.
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
     if (targets.length === 0) return targets[0];
-    return targets.reduce((best, current) =>
-      parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best
-    );
+
+    let best = targets[0];
+    let maxBalance = parseFloat(best.heartBalance);
+
+    for (let i = 1; i < targets.length; i++) {
+      const current = targets[i];
+      const currentBalance = parseFloat(current.heartBalance);
+
+      if (currentBalance > maxBalance) {
+        best = current;
+        maxBalance = currentBalance;
+      }
+    }
+
+    return best;
   }
 
   /**
