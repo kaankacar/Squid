@@ -578,9 +578,15 @@ export class StellarSquidAgent {
   async scan(): Promise<AgentSummary[]> {
     console.log('🔍 Scanning for targets...');
     
-    const allAgents = await this.client.getAllAgents();
-    const deadAgents = await this.client.getDeadAgents();
-    const vulnerableAgents = await this.client.getVulnerableAgents();
+    // ⚡ Bolt Performance Optimization:
+    // Parallelize independent network requests to hide latency.
+    // This reduces the overall execution time of scan() by executing
+    // Horizon/RPC queries concurrently instead of sequentially.
+    const [allAgents, deadAgents, vulnerableAgents] = await Promise.all([
+      this.client.getAllAgents(),
+      this.client.getDeadAgents(),
+      this.client.getVulnerableAgents()
+    ]);
     
     this.loopState.lastScan = Date.now();
     this.loopState.scanCache = allAgents;
