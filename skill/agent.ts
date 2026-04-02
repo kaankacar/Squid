@@ -535,9 +535,22 @@ export class StellarSquidAgent {
    */
   private selectBestLiquidationTarget(targets: AgentSummary[]): AgentSummary {
     if (targets.length === 0) return targets[0];
-    return targets.reduce((best, current) =>
-      parseFloat(current.heartBalance) > parseFloat(best.heartBalance) ? current : best
-    );
+
+    // Performance Optimization: Cache parsed float to avoid redundant O(2N) parsing operations
+    let best = targets[0];
+    let maxBalance = parseFloat(best.heartBalance);
+
+    for (let i = 1; i < targets.length; i++) {
+      const current = targets[i];
+      const currentBalance = parseFloat(current.heartBalance);
+
+      if (currentBalance > maxBalance) {
+        maxBalance = currentBalance;
+        best = current;
+      }
+    }
+
+    return best;
   }
 
   /**

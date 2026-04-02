@@ -7,3 +7,7 @@
 ## 2024-05-22 - [Optimized finding max/min array elements]
 **Learning:** In TypeScript/JavaScript, when finding the maximum or minimum element in an array based on an object property (like `heartBalance`), using `.sort((a,b) => ...)[0]` has an O(N log N) time complexity. Using `Array.prototype.reduce()` to find the maximum/minimum object only requires one pass through the array, which gives an O(N) time complexity. We also noticed that empty arrays will throw a `TypeError: Reduce of empty array with no initial value` when `reduce` is used without an initial value, which `sort()[0]` simply resolves to `undefined`.
 **Action:** Replace `sort()[0]` with `reduce()` when finding max/min elements in arrays. Ensure that empty arrays are explicitly handled by either returning early (e.g. `if (arr.length === 0) return arr[0]`) or by providing an appropriate initial value to avoid `TypeError`.
+
+## 2026-04-02 - [Optimize max/min search with expensive comparisons]
+**Learning:** When using `reduce()` to find a maximum or minimum element based on a property that requires expensive parsing (like `parseFloat()`), the best element's property is redundantly parsed on every iteration, leading to O(2N) parsing operations.
+**Action:** Replace `reduce()` with a `for` loop and cache the parsed best value in a separate variable. This reduces the parsing operations from O(2N) to O(N).
