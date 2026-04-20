@@ -33,7 +33,10 @@ export function getAgent(config?: Partial<SkillConfig>): StellarSquidAgent {
  * Reset the agent instance (for testing)
  */
 export function resetAgent(): void {
-  agentInstance = null;
+  if (agentInstance) {
+    agentInstance.stopLoop();
+    agentInstance = null;
+  }
 }
 
 // ============================================================================
